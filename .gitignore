@@ -1,0 +1,7 @@
+build/
+.gradle/
+android/libs/
+local.properties
+*.iml
+out/
+vinzmoba-data.txt

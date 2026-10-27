@@ -1,0 +1,62 @@
+plugins { id 'com.android.application' }
+
+configurations { natives }
+
+android {
+    namespace 'com.vinz.moba'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.vinz.moba'
+        minSdk 21
+        targetSdk 33
+        versionCode 1
+        versionName '1.0'
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    signingConfigs {
+        debug {
+            if (file('../debug.keystore').exists()) {
+                storeFile file('../debug.keystore')
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
+        }
+    }
+    sourceSets { main { jniLibs.srcDirs = ['libs'] } }
+}
+
+dependencies {
+    implementation project(':core')
+    implementation 'com.badlogicgames.gdx:gdx-backend-android:1.12.1'
+    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    natives 'com.badlogicgames.gdx:gdx-platform:1.12.1:natives-armeabi-v7a'
+    natives 'com.badlogicgames.gdx:gdx-platform:1.12.1:natives-arm64-v8a'
+}
+
+tasks.register('copyAndroidNatives') {
+    doFirst {
+        file('libs/armeabi-v7a/').mkdirs()
+        file('libs/arm64-v8a/').mkdirs()
+        configurations.natives.copy().files.each { jar ->
+            def outputDir = null
+            if (jar.name.endsWith('natives-armeabi-v7a.jar')) outputDir = file('libs/armeabi-v7a')
+            if (jar.name.endsWith('natives-arm64-v8a.jar')) outputDir = file('libs/arm64-v8a')
+            if (outputDir != null) {
+                project.copy {
+                    from project.zipTree(jar)
+                    into outputDir
+                    include '*.so'
+                }
+            }
+        }
+    }
+}
+
+tasks.matching { it.name.contains('merge') && it.name.contains('JniLibFolders') }.configureEach {
+    it.dependsOn 'copyAndroidNatives'
+}
