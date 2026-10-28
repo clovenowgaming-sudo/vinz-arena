@@ -5,5 +5,5 @@ java {
 }
 dependencies {
     api 'com.badlogicgames.gdx:gdx:1.12.1'
-    api 'io.github.mgsx-dev.gdx-gltf:gltf:2.2.1'
+    api 'com.github.mgsx-dev.gdx-gltf:gltf:2.2.1'
 }

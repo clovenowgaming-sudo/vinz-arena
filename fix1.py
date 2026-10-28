@@ -1,0 +1,17 @@
+import os, subprocess
+D = os.path.dirname(os.path.abspath(__file__))
+os.chdir(D)
+p = os.path.join(D, "settings.gradle")
+s = open(p).read()
+s = s.replace("repositories { google(); mavenCentral() }\n}\nrootProject", "repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }\n}\nrootProject")
+open(p, "w").write(s)
+p = os.path.join(D, "core/build.gradle")
+s = open(p).read().replace("io.github.mgsx-dev.gdx-gltf:gltf:2.2.1", "com.github.mgsx-dev.gdx-gltf:gltf:2.2.1")
+open(p, "w").write(s)
+print(open(os.path.join(D, "settings.gradle")).read())
+def sh(c):
+    r = subprocess.run(c, shell=True, capture_output=True, text=True)
+    print("$", c); print(r.stdout + r.stderr, flush=True)
+sh("git add -A")
+sh('git commit -m "Use jitpack for gdx-gltf"')
+sh("git push origin main")
