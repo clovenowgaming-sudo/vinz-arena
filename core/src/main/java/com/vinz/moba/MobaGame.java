@@ -12,6 +12,9 @@ public class MobaGame extends Game {
     public void create() {
         I = this;
         Ui.init();
+        Sfx.init();
+        Actor3D.loadModels();
+        if (!Actor3D.modelsOk) G.say("3D models failed: " + Actor3D.loadError);
         setScreen(new LoginScreen());
     }
 }

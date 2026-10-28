@@ -27,8 +27,8 @@ public class LoginScreen extends ScreenAdapter {
         root.setFillParent(true);
         st.addActor(root);
         root.add(Ui.label("VINZ ARENA", 3.2f, new Color(1f, 0.85f, 0.3f, 1))).padBottom(2 * s).row();
-        root.add(Ui.label("5 v 5  MOBA", 1.3f, Color.WHITE)).padBottom(14 * s).row();
-        hostF = Ui.field(pf.getString("host", "127.0.0.1:7777"), "server host:port");
+        root.add(Ui.label("5 v 5  MOBA   -   Mod By Vinz :3", 1.3f, Color.WHITE)).padBottom(14 * s).row();
+        hostF = Ui.field(pf.getString("server", "127.0.0.1:7777"), "server host:port");
         root.add(hostF).width(280 * s).height(30 * s).padBottom(8 * s).row();
         if (MobaGame.I.platform.hasGoogle()) {
             root.add(Ui.btn("Sign in with Google", new Color(0.86f, 0.27f, 0.22f, 1), new Runnable() {
@@ -53,7 +53,7 @@ public class LoginScreen extends ScreenAdapter {
         int i = hs.lastIndexOf(':');
         G.host = i > 0 ? hs.substring(0, i) : hs;
         try { G.port = i > 0 ? Integer.parseInt(hs.substring(i + 1)) : 7777; } catch (Exception e) { G.port = 7777; }
-        pf.putString("host", hs);
+        pf.putString("server", hs);
         pf.flush();
         G.loggedIn = false;
         G.net.connect(G.host, G.port, "HELLO " + n);

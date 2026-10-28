@@ -11,7 +11,6 @@ import com.badlogic.gdx.graphics.g3d.Material;
 import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
-import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.model.Node;
 import com.badlogic.gdx.graphics.g3d.utils.MeshPartBuilder;
@@ -29,11 +28,12 @@ public class World {
     Texture grass;
 
     public static final Color BLUE = new Color(0.2f, 0.5f, 1f, 1), RED = new Color(1f, 0.25f, 0.25f, 1);
+    public Model tBase, tBody, tTop0, tTop1, cry0, cry1;
 
     Model shape(int kind, Color c, boolean glow, float w, float h, float d) {
         ModelBuilder mb = new ModelBuilder();
         Material m = Heroes.mat(c, glow);
-        Model md = mb.createBox(1, 1, 1, m, Usage.Position | Usage.Normal);
+        Model md;
         if (kind == 1) md = mb.createSphere(w, h, d, 14, 10, m, Usage.Position | Usage.Normal);
         else if (kind == 2) md = mb.createCylinder(w, h, d, 16, m, Usage.Position | Usage.Normal);
         else if (kind == 3) md = mb.createCone(w, h, d, 16, m, Usage.Position | Usage.Normal);
@@ -81,32 +81,24 @@ public class World {
 
         Model plat0 = shape(2, new Color(0.12f, 0.25f, 0.5f, 1), false, 14, 0.5f, 14);
         Model plat1 = shape(2, new Color(0.5f, 0.12f, 0.12f, 1), false, 14, 0.5f, 14);
-        Model crys0 = shape(3, BLUE, true, 3.2f, 6, 3.2f);
-        Model crys1 = shape(3, RED, true, 3.2f, 6, 3.2f);
         Model pil = shape(2, new Color(0.7f, 0.7f, 0.75f, 1), false, 1f, 4f, 1f);
         Model orb0 = shape(1, BLUE, true, 0.9f, 0.9f, 0.9f);
         Model orb1 = shape(1, RED, true, 0.9f, 0.9f, 0.9f);
         for (int t = 0; t < 2; t++) {
             float bx = t == 0 ? -43 : 43;
             add(t == 0 ? plat0 : plat1, bx, 0.25f, 0);
-            add(t == 0 ? crys0 : crys1, bx, 3.5f, 0);
             float[] ox = {-5, 5, -5, 5}, oz = {-5, -5, 5, 5};
             for (int i = 0; i < 4; i++) {
                 add(pil, bx + ox[i], 2f, oz[i]);
                 add(t == 0 ? orb0 : orb1, bx + ox[i], 4.4f, oz[i]);
             }
         }
-        Model tbase = shape(2, new Color(0.45f, 0.45f, 0.5f, 1), false, 3.2f, 0.6f, 3.2f);
-        Model tbody = shape(2, new Color(0.62f, 0.62f, 0.68f, 1), false, 2f, 5f, 2f);
-        Model ttop0 = shape(1, BLUE, true, 1.8f, 1.8f, 1.8f);
-        Model ttop1 = shape(1, RED, true, 1.8f, 1.8f, 1.8f);
-        float[] tx = {-28, -14, 14, 28};
-        for (float z : lz)
-            for (float x : tx) {
-                add(tbase, x, 0.3f, z);
-                add(tbody, x, 2.8f, z);
-                add(x < 0 ? ttop0 : ttop1, x, 5.9f, z);
-            }
+        tBase = shape(2, new Color(0.45f, 0.45f, 0.5f, 1), false, 3.2f, 0.6f, 3.2f);
+        tBody = shape(2, new Color(0.62f, 0.62f, 0.68f, 1), false, 2f, 5f, 2f);
+        tTop0 = shape(1, BLUE, true, 1.8f, 1.8f, 1.8f);
+        tTop1 = shape(1, RED, true, 1.8f, 1.8f, 1.8f);
+        cry0 = shape(3, BLUE, true, 3.2f, 6, 3.2f);
+        cry1 = shape(3, RED, true, 3.2f, 6, 3.2f);
 
         ModelBuilder tb = new ModelBuilder();
         tb.begin();
@@ -124,10 +116,10 @@ public class World {
         Model tree = tb.end();
         models.add(tree);
         Random rnd = new Random(42);
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < 50; i++) {
             float x = -38 + rnd.nextFloat() * 76;
             float sg = rnd.nextBoolean() ? 1 : -1;
-            float z = rnd.nextBoolean() ? sg * (6.8f + rnd.nextFloat() * 5.5f) : sg * (22.5f + rnd.nextFloat() * 4.5f);
+            float z = rnd.nextBoolean() ? sg * (13.5f + rnd.nextFloat() * 2.5f) : sg * (27f + rnd.nextFloat() * 1.5f);
             ModelInstance mi = new ModelInstance(tree);
             float s = 0.7f + rnd.nextFloat() * 0.7f;
             mi.transform.setToTranslation(x, 0, z).scale(s, s, s);

@@ -21,8 +21,11 @@ import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector3;
 
+import net.mgsx.gltf.scene3d.lights.DirectionalLightEx;
+
 import java.util.ArrayList;
 
+/** Render-only match screen: the server simulates everything, this sends input and draws snapshots. */
 public class MatchScreen extends ScreenAdapter {
     static class Fx {
         ModelInstance mi; BlendingAttribute ba; int type;
@@ -31,35 +34,50 @@ public class MatchScreen extends ScreenAdapter {
 
     final int me = G.myIdx, myTeam = G.team(G.myIdx);
     final World world = new World();
-    final ModelBatch mb = new ModelBatch();
-    final Environment env = new Environment();
+    ModelBatch mbA, mbP;
+    final Environment env = new Environment(), envP = new Environment();
     final PerspectiveCamera cam;
-    final Heroes.Rig[] rig = new Heroes.Rig[10];
+    final Actor3D[] hero = new Actor3D[10];
     final ModelInstance[] ring = new ModelInstance[10];
+    ModelInstance targetRing;
     final Model ringM, sphereM, boxM;
     final ShapeRenderer sr = new ShapeRenderer();
     final SpriteBatch sb = new SpriteBatch();
     final ArrayList<Fx> fxs = new ArrayList<Fx>();
+    final ArrayList<float[]> nums = new ArrayList<float[]>();
     final Vector3 tmp = new Vector3();
     float W, H, s;
-    float px, pz, prot, cx, cz, t, sendT, atkT, dashT, dvx, dvz;
-    int panim;
-    final float[] cd = new float[4];
+    float px, pz, prot, cx, cz, t, mvT, smx, smz;
     final float[] vx = new float[10], vz = new float[10], vr = new float[10];
-    final float[] hx = new float[10], hy = new float[10];
-    final boolean[] hv = new boolean[10];
     float jx, jy, jbx, jby;
     int jptr = -1, bptr = -1;
-    boolean holdBasic, keyMove;
+    boolean keyMove, prevAlive = true;
     final float[] bx = new float[4], by = new float[4], br = new float[4];
     long endAt;
+    int annSeen;
+    float tgtX, tgtZ;
+    boolean hasTgt;
+    final java.util.ArrayList<float[]> proj = new java.util.ArrayList<float[]>(); // screen positions for hp bars
 
     public MatchScreen() {
         W = Gdx.graphics.getWidth();
         H = Gdx.graphics.getHeight();
         s = H / 360f;
+        mbA = new ModelBatch();
+        mbP = Actor3D.modelsOk ? Actor3D.pbrBatch() : null;
         env.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.6f, 0.6f, 0.65f, 1f));
         env.add(new DirectionalLight().set(0.9f, 0.88f, 0.8f, -0.5f, -1f, -0.4f));
+        envP.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.75f, 0.75f, 0.8f, 1f));
+        DirectionalLightEx l1 = new DirectionalLightEx();
+        l1.direction.set(-0.5f, -1f, -0.4f).nor();
+        l1.color.set(1f, 0.95f, 0.85f, 1f);
+        l1.intensity = 3f;
+        envP.add(l1);
+        DirectionalLightEx l2 = new DirectionalLightEx();
+        l2.direction.set(0.6f, -0.4f, 0.7f).nor();
+        l2.color.set(0.7f, 0.8f, 1f, 1f);
+        l2.intensity = 1.2f;
+        envP.add(l2);
         cam = new PerspectiveCamera(45, W, H);
         cam.near = 1;
         cam.far = 160;
@@ -68,17 +86,23 @@ public class MatchScreen extends ScreenAdapter {
         sphereM = b.createSphere(1, 1, 1, 12, 10, new Material(), Usage.Position | Usage.Normal);
         boxM = b.createBox(1, 1, 1, new Material(), Usage.Position | Usage.Normal);
         for (int i = 0; i < 10; i++) {
-            rig[i] = new Heroes.Rig(G.hero[i]);
+            hero[i] = Actor3D.hero(G.hero[i]);
             vx[i] = G.x[i]; vz[i] = G.z[i]; vr[i] = G.rot[i];
-            ring[i] = new ModelInstance(ringM);
             Color c = i == me ? new Color(0.3f, 1f, 0.4f, 1) : (G.team(i) == 0 ? World.BLUE : World.RED);
-            Material m = ring[i].materials.get(0);
-            m.set(ColorAttribute.createDiffuse(c));
-            m.set(ColorAttribute.createEmissive(c));
-            m.set(new BlendingAttribute(true, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, 0.65f));
+            ring[i] = ringInst(c, 0.65f);
         }
+        targetRing = ringInst(new Color(1f, 0.15f, 0.1f, 1), 0.8f);
         px = cx = G.x[me]; pz = cz = G.z[me]; prot = G.rot[me];
         layout();
+    }
+
+    ModelInstance ringInst(Color c, float a) {
+        ModelInstance mi = new ModelInstance(ringM);
+        Material m = mi.materials.get(0);
+        m.set(ColorAttribute.createDiffuse(c));
+        m.set(ColorAttribute.createEmissive(c));
+        m.set(new BlendingAttribute(true, GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA, a));
+        return mi;
     }
 
     void layout() {
@@ -95,6 +119,8 @@ public class MatchScreen extends ScreenAdapter {
         return a + d * k;
     }
 
+    static String f2(float v) { return String.valueOf(Math.round(v * 100) / 100.0); }
+
     @Override
     public void show() {
         Gdx.input.setInputProcessor(new InputAdapter() {
@@ -107,8 +133,8 @@ public class MatchScreen extends ScreenAdapter {
                 for (int k = 0; k < 4; k++) {
                     float dx = ux - bx[k], dy = uy - by[k];
                     if (Math.sqrt(dx * dx + dy * dy) <= br[k] * 1.15f) {
-                        if (k == 0) { holdBasic = true; bptr = ptr; }
-                        cast(k);
+                        if (k == 0) { bptr = ptr; G.net.send("ATK 1"); }
+                        G.net.send("CAST " + k);
                         return true;
                     }
                 }
@@ -121,14 +147,18 @@ public class MatchScreen extends ScreenAdapter {
             }
             public boolean touchUp(int x, int y, int ptr, int btn) {
                 if (ptr == jptr) jptr = -1;
-                if (ptr == bptr) { holdBasic = false; bptr = -1; }
+                if (ptr == bptr) { bptr = -1; G.net.send("ATK 0"); }
                 return true;
             }
             public boolean keyDown(int key) {
-                if (key == Input.Keys.J) cast(0);
-                if (key == Input.Keys.U) cast(1);
-                if (key == Input.Keys.I) cast(2);
-                if (key == Input.Keys.O) cast(3);
+                if (key == Input.Keys.J) { G.net.send("ATK 1"); G.net.send("CAST 0"); }
+                if (key == Input.Keys.U) G.net.send("CAST 1");
+                if (key == Input.Keys.I) G.net.send("CAST 2");
+                if (key == Input.Keys.O) G.net.send("CAST 3");
+                return true;
+            }
+            public boolean keyUp(int key) {
+                if (key == Input.Keys.J) G.net.send("ATK 0");
                 return true;
             }
         });
@@ -141,22 +171,7 @@ public class MatchScreen extends ScreenAdapter {
         else MobaGame.I.setScreen(new LobbyScreen());
     }
 
-    int nearest(float range) {
-        int best = -1;
-        float bd = range * range;
-        for (int j = 0; j < 10; j++) {
-            if (G.team(j) == myTeam || !G.alive[j]) continue;
-            float dx = vx[j] - px, dz = vz[j] - pz, d = dx * dx + dz * dz;
-            if (d < bd) { bd = d; best = j; }
-        }
-        return best;
-    }
-
-    void hit(int j, float dmg) {
-        G.net.send("HIT " + j + " " + (int) dmg);
-        flash(vx[j], vz[j], Heroes.ACC[G.hero[me]]);
-    }
-
+    // ------------------------------------------------------------ effects
     Fx mk(Model m, Color c, int type, float dur) {
         Fx f = new Fx();
         f.mi = new ModelInstance(m);
@@ -170,134 +185,35 @@ public class MatchScreen extends ScreenAdapter {
         return f;
     }
 
-    void ring(float x, float z, float r, Color c, float dur) { Fx f = mk(ringM, c, 0, dur); f.x0 = x; f.z0 = z; f.r = r; }
-    void flash(float x, float z, Color c) { Fx f = mk(sphereM, c, 3, 0.25f); f.x0 = x; f.z0 = z; }
-    void bolt(float x0, float z0, float y0, float x1, float z1, float y1, Color c, float dur) {
-        Fx f = mk(sphereM, c, 1, dur);
-        f.x0 = x0; f.z0 = z0; f.y0 = y0; f.x1 = x1; f.z1 = z1; f.y1 = y1;
-    }
-    void beam(float x0, float z0, float x1, float z1, float w, Color c, float dur) {
-        Fx f = mk(boxM, c, 2, dur);
-        f.x0 = x0; f.z0 = z0; f.x1 = x1; f.z1 = z1; f.r = w;
-    }
-
-    void cast(int k) {
-        if (!G.alive[me] || G.ended || !G.started || cd[k] > 0 || dashT > 0) return;
-        int h = G.hero[me];
-        float[] sk = Heroes.S[h][k];
-        int kind = (int) sk[0];
-        float a = sk[1], b = sk[2], dmg = sk[3];
-        boolean moving = (jptr >= 0 && Math.hypot(jx - jbx, jy - jby) > 8 * s) || keyMove;
-        if (!moving && (kind == 0 || kind == 2 || kind == 3 || kind == 4)) {
-            int j = nearest(a + 2);
-            if (j >= 0) prot = ang(vx[j] - px, vz[j] - pz);
+    void handleFx(float[] f) {
+        int type = (int) f[0], hero = (int) f[6], sk = (int) f[7];
+        Color c = (sk >= 8) ? new Color(1f, 0.7f, 0.3f, 1) : Heroes.ACC[Math.max(0, Math.min(3, hero))];
+        float x0 = f[1], z0 = f[2], x1 = f[3], z1 = f[4], r = f[5];
+        float d = (float) Math.hypot(x0 - px, z0 - pz);
+        float vol = Math.max(0.12f, 1f - d / 32f);
+        if (type == 0 && sk == 9) {
+            Fx a = mk(ringM, new Color(1f, 0.5f, 0.2f, 1), 0, 0.9f);
+            a.x0 = x0; a.z0 = z0; a.r = 7;
+            Sfx.play("tower", vol);
+            return;
         }
-        float fx0 = (float) Math.sin(Math.toRadians(prot)), fz0 = (float) Math.cos(Math.toRadians(prot));
-        cd[k] = sk[4];
-        panim = 2 + k;
-        atkT = k == 0 ? 0.42f : 0.75f;
-        Color col = Heroes.ACC[h];
-        switch (kind) {
-            case 0:
-            case 1:
-                for (int j = 0; j < 10; j++) {
-                    if (G.team(j) == myTeam || !G.alive[j]) continue;
-                    float dx = vx[j] - px, dz = vz[j] - pz, d = (float) Math.sqrt(dx * dx + dz * dz);
-                    boolean ok = d <= a + 0.7f;
-                    if (kind == 0 && d > 1.3f && (dx * fx0 + dz * fz0) / d < -0.3f) ok = false;
-                    if (ok) hit(j, dmg);
-                }
-                if (kind == 0) ring(px + fx0 * a * 0.5f, pz + fz0 * a * 0.5f, a * 0.7f, col, 0.25f);
-                else ring(px, pz, a, col, 0.45f);
-                break;
-            case 2:
-            case 4: {
-                float len = a;
-                for (int j = 0; j < 10; j++) {
-                    if (G.team(j) == myTeam || !G.alive[j]) continue;
-                    float dx = vx[j] - px, dz = vz[j] - pz;
-                    float proj = dx * fx0 + dz * fz0, lat = Math.abs(dx * fz0 - dz * fx0);
-                    if (proj > -0.5f && proj < len + 1f && lat <= b / 2 + 0.8f && dmg > 0) hit(j, dmg);
-                }
-                beam(px, pz, px + fx0 * len, pz + fz0 * len, kind == 2 ? b : b * 0.5f, col, kind == 2 ? 0.3f : 0.35f);
-                if (kind == 2) { dashT = 0.22f; dvx = fx0 * len / 0.22f; dvz = fz0 * len / 0.22f; }
-                break;
-            }
-            case 3: {
-                int j = nearest(a);
-                if (j >= 0) {
-                    prot = ang(vx[j] - px, vz[j] - pz);
-                    hit(j, dmg);
-                    bolt(px, pz, 1.6f, vx[j], vz[j], 1.3f, col, 0.18f);
-                } else bolt(px, pz, 1.6f, px + fx0 * a, pz + fz0 * a, 1.3f, col, 0.3f);
-                break;
-            }
-            case 5: {
-                int j = nearest(a);
-                float tx, tz;
-                if (j >= 0) { tx = vx[j]; tz = vz[j]; } else { tx = px + fx0 * a * 0.6f; tz = pz + fz0 * a * 0.6f; }
-                bolt(tx, tz, 14, tx, tz, 0.5f, col, 0.35f);
-                ring(tx, tz, b, col, 0.6f);
-                for (int q = 0; q < 10; q++) {
-                    if (G.team(q) == myTeam || !G.alive[q]) continue;
-                    float dx = vx[q] - tx, dz = vz[q] - tz;
-                    if (dx * dx + dz * dz <= (b + 0.6f) * (b + 0.6f)) hit(q, dmg);
-                }
-                break;
-            }
-            default:
-                dashT = 0.2f; dvx = -fx0 * a / 0.2f; dvz = -fz0 * a / 0.2f;
-                ring(px, pz, 2f, col, 0.3f);
+        if (type == 0) { Fx a = mk(ringM, c, 0, r > 5 ? 0.45f : 0.28f); a.x0 = x0; a.z0 = z0; a.r = Math.max(1.2f, r); }
+        else if (type == 1) {
+            Fx a = mk(sphereM, c, 1, 0.2f);
+            a.x0 = x0; a.z0 = z0; a.x1 = x1; a.z1 = z1;
+            a.y0 = sk == 9 ? 6f : (sk == 8 ? 1.2f : 1.6f); a.y1 = 1.3f;
+        } else if (type == 2) {
+            Fx a = mk(boxM, c, 2, 0.32f);
+            a.x0 = x0; a.z0 = z0; a.x1 = x1; a.z1 = z1; a.r = Math.max(0.4f, r);
+        } else if (type == 4) {
+            Fx a = mk(sphereM, c, 1, 0.35f);
+            a.x0 = x0; a.z0 = z0; a.x1 = x0; a.z1 = z0; a.y0 = 14; a.y1 = 0.5f;
+            Fx b = mk(ringM, c, 0, 0.6f);
+            b.x0 = x0; b.z0 = z0; b.r = r;
         }
-    }
-
-    void update(float dt, boolean lost) {
-        for (int k = 0; k < 4; k++) cd[k] = Math.max(0, cd[k] - dt);
-        float kk = Math.min(1, dt * 14);
-        for (int i = 0; i < 10; i++) {
-            vx[i] += (G.x[i] - vx[i]) * kk;
-            vz[i] += (G.z[i] - vz[i]) * kk;
-            vr[i] = lerpAngle(vr[i], G.rot[i], kk);
-        }
-        if (G.alive[me] && G.started && !G.ended && !lost) {
-            float mx = 0, mz = 0;
-            keyMove = false;
-            if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT)) mx -= 1;
-            if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) mx += 1;
-            if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP)) mz -= 1;
-            if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN)) mz += 1;
-            if (mx != 0 || mz != 0) {
-                keyMove = true;
-                float l = (float) Math.sqrt(mx * mx + mz * mz);
-                mx /= l; mz /= l;
-            }
-            if (jptr >= 0) {
-                float dx = jx - jbx, dy = jy - jby, d = (float) Math.sqrt(dx * dx + dy * dy);
-                if (d > 8 * s) {
-                    float k = Math.min(1, d / (55 * s));
-                    mx = dx / d * k;
-                    mz = -dy / d * k;
-                }
-            }
-            boolean moving = Math.abs(mx) + Math.abs(mz) > 0.12f;
-            if (dashT > 0) {
-                px += dvx * dt; pz += dvz * dt; dashT -= dt;
-            } else if (moving) {
-                float sp = Heroes.SPEED[G.hero[me]];
-                px += mx * sp * dt; pz += mz * sp * dt;
-                prot = lerpAngle(prot, ang(mx, mz), Math.min(1, dt * 16));
-            }
-            px = Math.max(-48, Math.min(48, px));
-            pz = Math.max(-28, Math.min(28, pz));
-            if (atkT > 0) atkT -= dt; else panim = moving ? 1 : 0;
-            if (holdBasic && cd[0] <= 0) cast(0);
-            sendT += dt;
-            if (sendT > 0.05f) {
-                sendT = 0;
-                G.net.send("POS " + (Math.round(px * 10) / 10.0) + " " + (Math.round(pz * 10) / 10.0) + " " + (Math.round(prot * 10) / 10.0) + " " + panim);
-            }
-        }
-        vx[me] = px; vz[me] = pz;
+        if (sk == 0) Sfx.play("atk", vol * 0.7f);
+        else if (sk >= 1 && sk <= 3) Sfx.play("s" + sk, vol);
+        else if (sk >= 8) Sfx.play("shot", vol * 0.3f);
     }
 
     void updFx(Fx f, float dt) {
@@ -316,18 +232,99 @@ public class MatchScreen extends ScreenAdapter {
                 f.ba.opacity = 0.95f;
                 break;
             }
-            case 2: {
+            default: {
                 float dx = f.x1 - f.x0, dz = f.z1 - f.z0, len = (float) Math.sqrt(dx * dx + dz * dz);
                 f.mi.transform.setToTranslation((f.x0 + f.x1) / 2, 1.2f, (f.z0 + f.z1) / 2).rotate(Vector3.Y, ang(dx, dz)).scale(f.r, 0.35f, len);
                 f.ba.opacity = 0.7f * (1 - p);
-                break;
-            }
-            default: {
-                float sz = 0.5f + 1.4f * p;
-                f.mi.transform.setToTranslation(f.x0, 1.4f, f.z0).scale(sz, sz, sz);
-                f.ba.opacity = 0.8f * (1 - p);
             }
         }
+    }
+
+    // ------------------------------------------------------------ update
+    void update(float dt, boolean lost) {
+        float k14 = Math.min(1, dt * 14);
+        for (int i = 0; i < 10; i++) {
+            vx[i] += (G.x[i] - vx[i]) * k14;
+            vz[i] += (G.z[i] - vz[i]) * k14;
+            vr[i] = lerpAngle(vr[i], G.rot[i], k14);
+        }
+        for (G.Ent e : G.ents.values()) {
+            e.vx += (e.x - e.vx) * k14;
+            e.vz += (e.z - e.vz) * k14;
+            e.vr = lerpAngle(e.vr, e.rot, k14);
+        }
+        float mx = 0, mz = 0;
+        keyMove = false;
+        if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT)) mx -= 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) mx += 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP)) mz -= 1;
+        if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN)) mz += 1;
+        if (mx != 0 || mz != 0) {
+            keyMove = true;
+            float l = (float) Math.sqrt(mx * mx + mz * mz);
+            mx /= l; mz /= l;
+        }
+        if (jptr >= 0) {
+            float dx = jx - jbx, dy = jy - jby, d = (float) Math.sqrt(dx * dx + dy * dy);
+            if (d > 8 * s) {
+                float k = Math.min(1, d / (55 * s));
+                mx = dx / d * k;
+                mz = -dy / d * k;
+            }
+        }
+        boolean active = G.alive[me] && G.started && !G.ended && !lost;
+        if (!active) { mx = 0; mz = 0; }
+        // tell the server our input (it does all the simulation)
+        mvT += dt;
+        boolean ch = Math.abs(mx - smx) > 0.04f || Math.abs(mz - smz) > 0.04f;
+        if (G.started && (ch || (mvT > 0.2f && (mx != 0 || mz != 0)) || mvT > 0.4f)) {
+            G.net.send("MV " + f2(mx) + " " + f2(mz));
+            smx = mx; smz = mz; mvT = 0;
+        }
+        // light client prediction for our own hero, corrected by the server snapshot
+        float sp = Heroes.SPEED[G.hero[me]];
+        px += mx * sp * dt; pz += mz * sp * dt;
+        float ex = G.x[me] - px, ez = G.z[me] - pz;
+        if (ex * ex + ez * ez > 25) { px = G.x[me]; pz = G.z[me]; }
+        else { float k = Math.min(1, dt * 6); px += ex * k; pz += ez * k; }
+        if (Math.abs(mx) + Math.abs(mz) > 0.12f) prot = lerpAngle(prot, ang(mx, mz), Math.min(1, dt * 16));
+        else prot = lerpAngle(prot, G.rot[me], Math.min(1, dt * 10));
+        vx[me] = px; vz[me] = pz;
+        // auto-target marker: nearest enemy in reach
+        hasTgt = false;
+        float bd = 10 * 10;
+        for (int i = 0; i < 10; i++) {
+            if (G.team(i) == myTeam || !G.alive[i]) continue;
+            float dx = vx[i] - px, dz = vz[i] - pz, d = dx * dx + dz * dz;
+            if (d < bd) { bd = d; tgtX = vx[i]; tgtZ = vz[i]; hasTgt = true; }
+        }
+        for (G.Ent e : G.ents.values()) {
+            if (e.team == myTeam) continue;
+            float dx = e.vx - px, dz = e.vz - pz, d = dx * dx + dz * dz;
+            if (d < bd) { bd = d; tgtX = e.vx; tgtZ = e.vz; hasTgt = true; }
+        }
+        // events from the server
+        for (float[] f : G.fxQ) handleFx(f);
+        G.fxQ.clear();
+        for (float[] d : G.dmgQ) {
+            nums.add(new float[]{d[0], d[1], d[2], 0, d[3] != myTeam ? 1 : 0});
+            float dd = (float) Math.hypot(d[0] - px, d[1] - pz);
+            if (dd < 25) Sfx.play("hit", d[3] != myTeam ? 0.35f : 0.2f);
+        }
+        G.dmgQ.clear();
+        for (int i = nums.size() - 1; i >= 0; i--) {
+            nums.get(i)[3] += dt;
+            if (nums.get(i)[3] > 1f) nums.remove(i);
+        }
+        while (annSeen < G.announce.size()) {
+            G.Msg m = G.announce.get(annSeen++);
+            if (m.kill) Sfx.play("k" + Math.max(1, Math.min(6, m.tier)));
+            else if (m.tier == 4) { } else Sfx.play("buff");
+        }
+        boolean al = G.alive[me];
+        if (prevAlive && !al) Sfx.play("death");
+        if (!prevAlive && al) Sfx.play("respawn");
+        prevAlive = al;
     }
 
     @Override
@@ -336,7 +333,10 @@ public class MatchScreen extends ScreenAdapter {
         t += dt;
         G.pump();
         boolean lost = G.net.state >= 3 && !G.ended;
-        if ((G.ended || lost) && endAt == 0) endAt = System.currentTimeMillis();
+        if ((G.ended || lost) && endAt == 0) {
+            endAt = System.currentTimeMillis();
+            if (G.ended) Sfx.play(G.winner == myTeam ? "win" : "lose");
+        }
         if (G.respawnPending) {
             px = G.x[me]; pz = G.z[me]; prot = G.rot[me];
             G.respawnPending = false;
@@ -351,28 +351,71 @@ public class MatchScreen extends ScreenAdapter {
         cam.update();
         Gdx.gl.glClearColor(0.45f, 0.7f, 0.95f, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
-        mb.begin(cam);
-        world.render(mb, env, cam);
+
+        // pass A: world + towers + procedural actors
+        ArrayList<Actor3D> pbrList = new ArrayList<Actor3D>();
+        mbA.begin(cam);
+        world.render(mbA, env, cam);
         for (int i = 0; i < 10; i++) {
             boolean al = G.alive[i];
-            int an = al ? (i == me ? panim : G.anim[i]) : 6;
-            rig[i].update(vx[i], vz[i], i == me ? prot : vr[i], an, t + i * 0.37f);
-            mb.render(rig[i].mi, env);
-            if (al) {
-                ring[i].transform.setToTranslation(vx[i], 0.07f, vz[i]).scale(1.15f, 1, 1.15f);
-                mb.render(ring[i], env);
+            int an = al ? G.anim[i] : 6;
+            hero[i].update(vx[i], vz[i], i == me ? prot : vr[i], an, t + i * 0.37f, dt);
+            if (hero[i].pbr) pbrList.add(hero[i]); else mbA.render(hero[i].mi, env);
+        }
+        for (G.Ent e : G.ents.values()) {
+            if (e.kind >= 4) { drawStatic(e); continue; }
+            if (e.actor == null) {
+                e.actor = e.kind == 0 ? Actor3D.minion(e.team, false) : e.kind == 1 ? Actor3D.minion(e.team, true) : Actor3D.monster(e.kind == 3);
             }
+            e.actor.update(e.vx, e.vz, e.vr, e.anim == 0 ? 0 : (e.anim == 1 ? 1 : 2), t + e.id * 0.3f, dt);
+            if (e.actor.pbr) pbrList.add(e.actor); else mbA.render(e.actor.mi, env);
+        }
+        mbA.end();
+        // pass B: glTF characters (PBR shader)
+        if (mbP != null && !pbrList.isEmpty()) {
+            mbP.begin(cam);
+            for (Actor3D a : pbrList) mbP.render(a.mi, envP);
+            mbP.end();
+        }
+        // pass C: transparent rings + effects
+        mbA.begin(cam);
+        for (int i = 0; i < 10; i++) {
+            if (!G.alive[i]) continue;
+            ring[i].transform.setToTranslation(vx[i], 0.07f, vz[i]).scale(1.15f, 1, 1.15f);
+            mbA.render(ring[i], env);
+        }
+        if (hasTgt && G.alive[me]) {
+            float pulse = 1.3f + 0.1f * (float) Math.sin(t * 8);
+            targetRing.transform.setToTranslation(tgtX, 0.09f, tgtZ).scale(pulse, 1, pulse);
+            mbA.render(targetRing, env);
         }
         for (int i = fxs.size() - 1; i >= 0; i--) {
             Fx f = fxs.get(i);
             updFx(f, dt);
             if (f.t >= f.dur) { fxs.remove(i); continue; }
-            mb.render(f.mi, env);
+            mbA.render(f.mi, env);
         }
-        mb.end();
+        mbA.end();
         hud(lost);
     }
 
+    void drawStatic(G.Ent e) {
+        if (e.parts == null) {
+            if (e.kind == 4) {
+                e.parts = new ModelInstance[]{new ModelInstance(world.tBase), new ModelInstance(world.tBody),
+                        new ModelInstance(e.team == 0 ? world.tTop0 : world.tTop1)};
+                e.parts[0].transform.setToTranslation(e.x, 0.3f, e.z);
+                e.parts[1].transform.setToTranslation(e.x, 2.8f, e.z);
+                e.parts[2].transform.setToTranslation(e.x, 5.9f, e.z);
+            } else {
+                e.parts = new ModelInstance[]{new ModelInstance(e.team == 0 ? world.cry0 : world.cry1)};
+            }
+        }
+        if (e.kind == 5) e.parts[0].transform.setToTranslation(e.x, 3.5f + (float) Math.sin(t * 2) * 0.3f, e.z).rotate(Vector3.Y, t * 40);
+        for (ModelInstance mi : e.parts) mbA.render(mi, env);
+    }
+
+    // ------------------------------------------------------------ HUD (Mobile-Legends style layout)
     static Color tierColor(int tier) {
         switch (tier) {
             case 1: return Color.WHITE;
@@ -384,45 +427,75 @@ public class MatchScreen extends ScreenAdapter {
         }
     }
 
+    float[] bar(float wx, float wy, float wz) {
+        tmp.set(wx, wy, wz);
+        cam.project(tmp);
+        return new float[]{tmp.x, tmp.y, tmp.z};
+    }
+
     void hud(boolean lost) {
         long now = System.currentTimeMillis();
         int h = G.hero[me];
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        proj.clear();
         sr.begin(ShapeRenderer.ShapeType.Filled);
+        // hero bars
         for (int i = 0; i < 10; i++) {
-            hv[i] = false;
-            if (!G.alive[i]) continue;
-            tmp.set(vx[i], 3.0f * rig[i].scale + 0.3f, vz[i]);
-            cam.project(tmp);
-            if (tmp.z > 1) continue;
-            hv[i] = true; hx[i] = tmp.x; hy[i] = tmp.y;
-            float bw = 44 * s, frac = Math.max(0, Math.min(1f, G.hp[i] / (float) Heroes.HP[G.hero[i]]));
-            sr.setColor(0, 0, 0, 0.65f);
-            sr.rect(tmp.x - bw / 2 - s, tmp.y - s, bw + 2 * s, 7 * s);
+            if (!G.alive[i]) { proj.add(null); continue; }
+            float[] p = bar(vx[i], 3.1f, vz[i]);
+            if (p[2] > 1) { proj.add(null); continue; }
+            proj.add(p);
+            float bw = 46 * s, frac = Math.max(0, Math.min(1f, G.hp[i] / (float) Heroes.HP[G.hero[i]]));
+            sr.setColor(0, 0, 0, 0.7f);
+            sr.rect(p[0] - bw / 2 - s, p[1] - s, bw + 2 * s, 7 * s);
             if (i == me) sr.setColor(0.3f, 1f, 0.4f, 1); else if (G.team(i) == 0) sr.setColor(0.3f, 0.6f, 1f, 1); else sr.setColor(1f, 0.3f, 0.3f, 1);
-            sr.rect(tmp.x - bw / 2, tmp.y, bw * frac, 5 * s);
+            sr.rect(p[0] - bw / 2, p[1], bw * frac, 5 * s);
+        }
+        // minion / monster / tower bars
+        for (G.Ent e : G.ents.values()) {
+            float wy = e.kind <= 1 ? 2.2f : (e.kind <= 3 ? (e.kind == 3 ? 5f : 3f) : (e.kind == 4 ? 7.5f : 7f));
+            float[] p = bar(e.vx, wy, e.vz);
+            if (p[2] > 1) continue;
+            float bw = (e.kind <= 1 ? 22 : (e.kind <= 3 ? 34 : 56)) * s, frac = Math.max(0, Math.min(1f, e.hp / (float) Math.max(1, e.maxhp)));
+            sr.setColor(0, 0, 0, 0.65f);
+            sr.rect(p[0] - bw / 2 - s * 0.7f, p[1] - s * 0.7f, bw + 1.4f * s, 4.4f * s);
+            if (e.team == 2) sr.setColor(1f, 0.8f, 0.2f, 1); else if (e.team == myTeam) sr.setColor(0.3f, 0.6f, 1f, 1); else sr.setColor(1f, 0.3f, 0.3f, 1);
+            sr.rect(p[0] - bw / 2, p[1], bw * frac, 3 * s);
         }
         // minimap
         float mw = 150 * s, mh = 90 * s, m0x = 8 * s, m0y = H - 8 * s - mh;
-        sr.setColor(0, 0, 0, 0.5f);
+        sr.setColor(0, 0, 0, 0.55f);
         sr.rect(m0x, m0y, mw, mh);
-        sr.setColor(0.2f, 0.5f, 1f, 0.9f);
-        sr.circle(m0x + 0.07f * mw, m0y + mh / 2, 5 * s);
-        sr.setColor(1f, 0.3f, 0.3f, 0.9f);
-        sr.circle(m0x + 0.93f * mw, m0y + mh / 2, 5 * s);
+        sr.setColor(0.2f, 0.45f, 0.2f, 0.55f);
+        sr.rect(m0x + 2 * s, m0y + 2 * s, mw - 4 * s, mh - 4 * s);
+        for (G.Ent e : G.ents.values()) {
+            float mx = m0x + (e.vx + 50) / 100f * mw, my = m0y + (1 - (e.vz + 30) / 60f) * mh;
+            if (e.kind <= 1) { sr.setColor(e.team == 0 ? 0.4f : 1f, 0.6f, e.team == 0 ? 1f : 0.4f, 0.9f); sr.circle(mx, my, 1.4f * s); }
+            else if (e.kind <= 3) { sr.setColor(1f, 0.85f, 0.2f, 0.9f); sr.circle(mx, my, 2f * s); }
+            else { sr.setColor(e.team == 0 ? 0.3f : 1f, 0.5f, e.team == 0 ? 1f : 0.3f, 1f); sr.rect(mx - 2.5f * s, my - 2.5f * s, 5 * s, 5 * s); }
+        }
         for (int i = 0; i < 10; i++) {
             if (!G.alive[i]) continue;
             float mx = m0x + (vx[i] + 50) / 100f * mw, my = m0y + (1 - (vz[i] + 30) / 60f) * mh;
-            if (i == me) sr.setColor(1, 1, 1, 1); else if (G.team(i) == 0) sr.setColor(0.3f, 0.6f, 1f, 1); else sr.setColor(1f, 0.3f, 0.3f, 1);
+            if (i == me) sr.setColor(1, 1, 1, 1); else if (G.team(i) == 0) sr.setColor(0.3f, 0.7f, 1f, 1); else sr.setColor(1f, 0.3f, 0.3f, 1);
             sr.circle(mx, my, (i == me ? 4 : 3) * s);
         }
         // score panel
-        float pw = 240 * s, ph = 30 * s, p0x = W / 2 - pw / 2, p0y = H - ph - 6 * s;
-        sr.setColor(0.15f, 0.4f, 0.9f, 0.7f);
-        sr.rect(p0x, p0y, pw / 2, ph);
-        sr.setColor(0.9f, 0.2f, 0.2f, 0.7f);
-        sr.rect(p0x + pw / 2, p0y, pw / 2, ph);
+        float pw = 250 * s, ph = 28 * s, p0x = W / 2 - pw / 2, p0y = H - ph - 6 * s;
+        sr.setColor(0.1f, 0.35f, 0.9f, 0.8f);
+        sr.rect(p0x, p0y, pw * 0.4f, ph);
+        sr.setColor(0.05f, 0.05f, 0.1f, 0.85f);
+        sr.rect(p0x + pw * 0.4f, p0y, pw * 0.2f, ph);
+        sr.setColor(0.9f, 0.15f, 0.15f, 0.8f);
+        sr.rect(p0x + pw * 0.6f, p0y, pw * 0.4f, ph);
+        // my hp bar (bottom center)
+        float hw = 210 * s, hx0 = W / 2 - hw / 2, hy0 = 10 * s;
+        float hf = Math.max(0, Math.min(1, G.hp[me] / (float) Heroes.HP[h]));
+        sr.setColor(0, 0, 0, 0.7f);
+        sr.rect(hx0 - 2 * s, hy0 - 2 * s, hw + 4 * s, 14 * s);
+        sr.setColor(0.25f, 0.9f, 0.35f, 1);
+        sr.rect(hx0, hy0, hw * hf, 10 * s);
         // joystick
         float jr = 55 * s;
         if (jptr >= 0) {
@@ -435,19 +508,21 @@ public class MatchScreen extends ScreenAdapter {
         } else {
             sr.setColor(1, 1, 1, 0.1f);
             sr.circle(100 * s, 90 * s, jr);
+            sr.setColor(1, 1, 1, 0.18f);
+            sr.circle(100 * s, 90 * s, 22 * s);
         }
         // buttons
         for (int k = 0; k < 4; k++) {
-            if (k == 0) sr.setColor(0.85f, 0.25f, 0.2f, 0.8f);
-            else { Color c = Heroes.MAIN[h]; sr.setColor(c.r, c.g, c.b, 0.85f); }
+            Color c = k == 0 ? new Color(0.85f, 0.25f, 0.2f, 1) : Heroes.MAIN[h];
+            sr.setColor(1f, 0.85f, 0.4f, 0.9f);
             sr.circle(bx[k], by[k], br[k]);
-            sr.setColor(1, 1, 1, 0.35f);
-            sr.circle(bx[k], by[k], br[k] * 0.86f);
-            if (k == 0) sr.setColor(0.85f, 0.25f, 0.2f, 0.9f); else { Color c = Heroes.MAIN[h]; sr.setColor(c.r, c.g, c.b, 0.9f); }
-            sr.circle(bx[k], by[k], br[k] * 0.8f);
-            if (cd[k] > 0) {
-                sr.setColor(0, 0, 0, 0.65f);
-                sr.arc(bx[k], by[k], br[k], 90, 360f * Math.min(1, cd[k] / Heroes.S[h][k][4]));
+            sr.setColor(c.r * 0.55f, c.g * 0.55f, c.b * 0.55f, 0.95f);
+            sr.circle(bx[k], by[k], br[k] * 0.92f);
+            sr.setColor(c.r, c.g, c.b, 0.95f);
+            sr.circle(bx[k], by[k], br[k] * 0.78f);
+            if (G.cd[k] > 0.05f) {
+                sr.setColor(0, 0, 0, 0.7f);
+                sr.arc(bx[k], by[k], br[k] * 0.92f, 90, 360f * Math.min(1, G.cd[k] / Heroes.S[h][k][4]));
             }
         }
         if (!G.alive[me] && !G.ended) { sr.setColor(0.2f, 0.2f, 0.25f, 0.45f); sr.rect(0, 0, W, H); }
@@ -456,38 +531,49 @@ public class MatchScreen extends ScreenAdapter {
 
         sb.begin();
         for (int i = 0; i < 10; i++) {
-            if (!hv[i]) continue;
+            float[] p = i < proj.size() ? proj.get(i) : null;
+            if (p == null) continue;
             Color c = i == me ? new Color(0.5f, 1f, 0.6f, 1) : (G.team(i) == 0 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.6f, 1));
-            Ui.text(sb, G.names[i], hx[i], hy[i] + 12 * s, 0.6f, c, 1);
+            Ui.text(sb, G.names[i], p[0], p[1] + 12 * s, 0.6f, c, 1);
         }
-        Ui.text(sb, String.valueOf(G.teamKills[0]), p0x + pw * 0.25f, p0y + ph / 2, 1.5f, Color.WHITE, 1);
-        Ui.text(sb, String.valueOf(G.teamKills[1]), p0x + pw * 0.75f, p0y + ph / 2, 1.5f, Color.WHITE, 1);
+        for (float[] n : nums) {
+            float[] p = bar(n[0], 3.0f + n[3] * 2.5f, n[1]);
+            if (p[2] > 1) continue;
+            Color c = n[4] > 0 ? new Color(1f, 0.95f, 0.4f, 1f - n[3]) : new Color(1f, 0.3f, 0.3f, 1f - n[3]);
+            Ui.text(sb, String.valueOf((int) n[2]), p[0], p[1], 0.9f + (n[2] > 150 ? 0.3f : 0), c, 1);
+        }
+        Ui.text(sb, String.valueOf(G.teamKills[0]), p0x + pw * 0.2f, p0y + ph / 2, 1.5f, Color.WHITE, 1);
+        Ui.text(sb, String.valueOf(G.teamKills[1]), p0x + pw * 0.8f, p0y + ph / 2, 1.5f, Color.WHITE, 1);
         long sec = Math.max(0, (now - G.startAt) / 1000);
-        Ui.text(sb, String.format("%02d:%02d", sec / 60, sec % 60), W / 2, p0y - 8 * s, 0.8f, Color.WHITE, 1);
+        Ui.text(sb, String.format("%02d:%02d", sec / 60, sec % 60), W / 2, p0y + ph / 2, 0.9f, Color.WHITE, 1);
         Ui.text(sb, "K " + G.kills[me] + "  D " + G.deaths[me], m0x, m0y - 8 * s, 0.7f, Color.WHITE, 0);
+        Ui.text(sb, Gdx.graphics.getFramesPerSecond() + " FPS", W - 8 * s, H - 8 * s, 0.6f, Color.LIGHT_GRAY, 2);
+        Ui.text(sb, G.hp[me] + " / " + Heroes.HP[h], W / 2, hy0 + 5 * s, 0.6f, Color.WHITE, 1);
         for (int k = 0; k < 4; k++) {
             Ui.text(sb, k == 0 ? "ATK" : Heroes.ATK[h][k], bx[k], by[k], k == 0 ? 0.9f : 0.5f, Color.WHITE, 1);
-            if (cd[k] > 0) Ui.text(sb, String.valueOf((int) Math.ceil(cd[k])), bx[k], by[k] + br[k] * 0.1f, 1.4f, Color.YELLOW, 1);
+            if (G.cd[k] > 0.05f) Ui.text(sb, String.valueOf((int) Math.ceil(G.cd[k])), bx[k], by[k] + br[k] * 0.1f, 1.4f, Color.YELLOW, 1);
         }
         int fi = 0;
         for (int i = G.feed.size() - 1; i >= 0; i--) {
             G.Msg m = G.feed.get(i);
             if (now - m.at > 6000) continue;
-            Ui.text(sb, m.text, W - 8 * s, H - 14 * s - fi * 16 * s, 0.8f, m.team == 0 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.6f, 1), 2);
+            Ui.text(sb, m.text, W - 8 * s, H - 26 * s - fi * 16 * s, 0.8f, m.team == 0 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.6f, 1), 2);
             fi++;
         }
         if (!G.announce.isEmpty()) {
             G.Msg m = G.announce.get(G.announce.size() - 1);
             float age = (now - m.at) / 1000f;
             if (age < 2.6f) {
-                float mul = 1.5f + 0.35f * m.tier;
+                float mul = m.kill ? 1.5f + 0.35f * m.tier : 1.4f;
                 if (age < 0.2f) mul *= 0.5f + 2.5f * age;
-                Color c = tierColor(m.tier).cpy();
+                Color c = (m.kill ? tierColor(m.tier) : new Color(1f, 0.85f, 0.3f, 1)).cpy();
                 if (age > 2.0f) c.a = Math.max(0, 1 - (age - 2.0f) / 0.6f);
                 Ui.text(sb, m.text, W / 2, H * 0.72f, mul, c, 1);
-                Color sc2 = (m.team == 0 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.6f, 1));
-                sc2.a = c.a;
-                Ui.text(sb, m.sub, W / 2, H * 0.72f - (18 + 6 * m.tier) * s, 0.9f, sc2, 1);
+                if (m.kill) {
+                    Color sc2 = (m.team == 0 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.6f, 1));
+                    sc2.a = c.a;
+                    Ui.text(sb, m.sub, W / 2, H * 0.72f - (18 + 6 * m.tier) * s, 0.9f, sc2, 1);
+                }
             }
         }
         if (!G.alive[me] && !G.ended) Ui.text(sb, "YOU DIED - respawning...", W / 2, H * 0.5f, 1.6f, Color.WHITE, 1);
@@ -518,7 +604,9 @@ public class MatchScreen extends ScreenAdapter {
     @Override
     public void hide() {
         Gdx.input.setInputProcessor(null);
-        world.dispose(); mb.dispose(); sr.dispose(); sb.dispose();
+        G.net.send("MV 0 0");
+        G.net.send("ATK 0");
+        world.dispose(); mbA.dispose(); if (mbP != null) mbP.dispose(); sr.dispose(); sb.dispose();
         ringM.dispose(); sphereM.dispose(); boxM.dispose();
     }
 }

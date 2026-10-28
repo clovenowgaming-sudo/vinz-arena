@@ -5,3 +5,9 @@ local.properties
 *.iml
 out/
 vinzmoba-data.txt
+
+ks/
+*.log
+dl.log
+vinzmoba-data.json
+__pycache__/

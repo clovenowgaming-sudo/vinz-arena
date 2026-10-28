@@ -1,6 +1,8 @@
 package com.vinz.moba;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
 
 public class G {
     public static final Net net = new Net();
@@ -28,10 +30,24 @@ public class G {
     public static final int[] hero = new int[10], anim = new int[10], hp = new int[10], kills = new int[10], deaths = new int[10];
     public static final boolean[] picked = new boolean[10], alive = new boolean[10];
     public static final float[] x = new float[10], z = new float[10], rot = new float[10];
+    public static final float[] cd = new float[4];
     public static final int[] teamKills = new int[2];
 
-    public static class Msg { public String text = "", sub = ""; public int team, tier; public long at; }
+    public static class Msg { public String text = "", sub = ""; public int team, tier; public long at; public boolean kill; }
     public static final ArrayList<Msg> announce = new ArrayList<Msg>(), feed = new ArrayList<Msg>();
+
+    // world entities sent by the server: minions, jungle monsters, towers, nexus
+    public static class Ent {
+        public int id, kind, team, anim, hp, maxhp, seq;
+        public float x, z, rot, vx, vz, vr;
+        public boolean fresh = true;
+        public Actor3D actor;
+        public com.badlogic.gdx.graphics.g3d.ModelInstance[] parts;
+    }
+    public static final HashMap<Integer, Ent> ents = new HashMap<Integer, Ent>();
+    static int seq;
+    public static final ArrayList<float[]> fxQ = new ArrayList<float[]>();   // type,x0,z0,x1,z1,r,hero,sk
+    public static final ArrayList<float[]> dmgQ = new ArrayList<float[]>();  // x,z,amount,victimTeam
 
     public static int team(int i) { return i < 5 ? 0 : 1; }
     public static void say(String s) { toast = s; toastAt = System.currentTimeMillis(); }
@@ -48,7 +64,7 @@ public class G {
 
     public static void resetMatch() {
         matchFound = false; started = false; ended = false;
-        announce.clear(); feed.clear();
+        announce.clear(); feed.clear(); ents.clear(); fxQ.clear(); dmgQ.clear();
     }
 
     public static void pump() {
@@ -89,7 +105,7 @@ public class G {
                 kills[i] = 0; deaths[i] = 0; anim[i] = 0;
             }
             teamKills[0] = 0; teamKills[1] = 0;
-            announce.clear(); feed.clear();
+            announce.clear(); feed.clear(); ents.clear(); fxQ.clear(); dmgQ.clear();
             hero[myIdx] = pickHero;
             pickEnd = now + 15000;
             respawnPending = true;
@@ -113,12 +129,39 @@ public class G {
                 anim[i] = Integer.parseInt(f[3]); hp[i] = Integer.parseInt(f[4]); alive[i] = f[5].equals("1");
             }
         }
+        else if (c.equals("E")) {
+            seq++;
+            for (int i = 1; i < p.length; i++) {
+                String[] f = p[i].split(",");
+                int id = Integer.parseInt(f[0]);
+                Ent e = ents.get(id);
+                if (e == null) { e = new Ent(); e.id = id; ents.put(id, e); }
+                e.kind = Integer.parseInt(f[1]); e.team = Integer.parseInt(f[2]);
+                e.x = Float.parseFloat(f[3]); e.z = Float.parseFloat(f[4]); e.rot = Float.parseFloat(f[5]);
+                e.hp = Integer.parseInt(f[6]); e.maxhp = Integer.parseInt(f[7]); e.anim = Integer.parseInt(f[8]);
+                if (e.fresh) { e.vx = e.x; e.vz = e.z; e.vr = e.rot; e.fresh = false; }
+                e.seq = seq;
+            }
+            for (Iterator<Ent> it = ents.values().iterator(); it.hasNext(); ) {
+                if (it.next().seq != seq) it.remove();
+            }
+        }
+        else if (c.equals("C")) { for (int i = 0; i < 4; i++) cd[i] = Float.parseFloat(p[i + 1]); }
+        else if (c.equals("FX")) {
+            float[] f = new float[8];
+            for (int i = 0; i < 8; i++) f[i] = Float.parseFloat(p[i + 1]);
+            if (fxQ.size() < 60) fxQ.add(f);
+        }
+        else if (c.equals("D")) {
+            float[] f = {Float.parseFloat(p[1]), Float.parseFloat(p[2]), Float.parseFloat(p[3]), Float.parseFloat(p[4])};
+            if (dmgQ.size() < 60) dmgQ.add(f);
+        }
         else if (c.equals("K")) {
             int k = Integer.parseInt(p[1]), v = Integer.parseInt(p[2]);
             StringBuilder sb = new StringBuilder();
             for (int i = 4; i < p.length; i++) { if (i > 4) sb.append(' '); sb.append(p[i]); }
             Msg m = new Msg();
-            m.text = sb.toString(); m.tier = Integer.parseInt(p[3]); m.team = team(k); m.at = now;
+            m.text = sb.toString(); m.tier = Integer.parseInt(p[3]); m.team = team(k); m.at = now; m.kill = true;
             m.sub = names[k] + " slew " + names[v];
             announce.add(m);
             Msg fd = new Msg();
@@ -126,6 +169,13 @@ public class G {
             feed.add(fd);
             if (feed.size() > 6) feed.remove(0);
             kills[k]++; deaths[v]++; teamKills[team(k)]++;
+        }
+        else if (c.equals("A")) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 3; i < p.length; i++) { if (i > 3) sb.append(' '); sb.append(p[i]); }
+            Msg m = new Msg();
+            m.team = Integer.parseInt(p[1]); m.tier = Integer.parseInt(p[2]); m.text = sb.toString(); m.at = now;
+            announce.add(m);
         }
         else if (c.equals("R")) { if (Integer.parseInt(p[1]) == myIdx) respawnPending = true; }
         else if (c.equals("END")) { winner = Integer.parseInt(p[1]); rankChange = Integer.parseInt(p[2]); ended = true; }

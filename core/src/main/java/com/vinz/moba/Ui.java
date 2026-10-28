@@ -17,6 +17,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.NinePatchDrawable;
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 
 import java.util.HashMap;
 
@@ -26,6 +27,9 @@ public class Ui {
     static final GlyphLayout GL = new GlyphLayout();
     static final HashMap<Integer, NinePatchDrawable> cache = new HashMap<Integer, NinePatchDrawable>();
     static Texture white;
+
+    public static final Color GOLD = new Color(1f, 0.82f, 0.28f, 1);
+    public static final Color PANEL = new Color(0.04f, 0.07f, 0.16f, 0.82f);
 
     public static void init() {
         sc = Gdx.graphics.getHeight() / 360f;
@@ -82,7 +86,7 @@ public class Ui {
         TextButton b = new TextButton(s, st);
         b.getLabel().setFontScale(fs);
         b.addListener(new ChangeListener() {
-            public void changed(ChangeEvent e, Actor a) { r.run(); }
+            public void changed(ChangeEvent e, Actor a) { Sfx.play("click", 0.6f); r.run(); }
         });
         return b;
     }
@@ -93,8 +97,8 @@ public class Ui {
         st.fontColor = Color.WHITE;
         st.messageFontColor = Color.GRAY;
         st.background = round(new Color(0.05f, 0.08f, 0.16f, 0.95f));
-        st.cursor = new com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(new TextureRegion(white));
-        st.selection = new com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(new TextureRegion(white));
+        st.cursor = new TextureRegionDrawable(new TextureRegion(white));
+        st.selection = new TextureRegionDrawable(new TextureRegion(white));
         TextField f = new TextField(text, st);
         f.setMessageText(hint);
         return f;
@@ -110,6 +114,7 @@ public class Ui {
         font.getData().setScale(fs);
     }
 
+    /** Dark-blue/gold animated background in the style of a MOBA lobby. */
     public static void bg(ShapeRenderer sr, float t) {
         int w = Gdx.graphics.getWidth(), h = Gdx.graphics.getHeight();
         float k = (float) Math.sin(t * 0.4f) * 0.5f + 0.5f;
@@ -128,6 +133,13 @@ public class Ui {
             sr.setColor(0.4f, 0.7f, 1f, 0.08f + 0.06f * (float) Math.sin(t + i));
             sr.circle(px, py, r);
         }
+        // gold frame lines (top / bottom bars)
+        sr.setColor(0, 0, 0, 0.45f);
+        sr.rect(0, h - 44 * sc, w, 44 * sc);
+        sr.rect(0, 0, w, 62 * sc);
+        sr.setColor(GOLD.r, GOLD.g, GOLD.b, 0.8f);
+        sr.rect(0, h - 44 * sc - 1.5f * sc, w, 1.5f * sc);
+        sr.rect(0, 62 * sc, w, 1.5f * sc);
         sr.end();
     }
 }

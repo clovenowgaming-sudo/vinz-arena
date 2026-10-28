@@ -3,4 +3,7 @@ java {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
 }
-dependencies { api 'com.badlogicgames.gdx:gdx:1.12.1' }
+dependencies {
+    api 'com.badlogicgames.gdx:gdx:1.12.1'
+    api 'io.github.mgsx-dev.gdx-gltf:gltf:2.2.1'
+}

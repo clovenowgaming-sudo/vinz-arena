@@ -15,13 +15,15 @@ import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 
+import net.mgsx.gltf.scene3d.lights.DirectionalLightEx;
+
 public class HeroSelectScreen extends ScreenAdapter {
     final Stage st = new Stage(new ScreenViewport());
     final ShapeRenderer sr = new ShapeRenderer();
-    final ModelBatch mb = new ModelBatch();
-    final Environment env = new Environment();
+    ModelBatch mbA, mbP;
+    final Environment env = new Environment(), envP = new Environment();
     PerspectiveCamera cam;
-    Heroes.Rig rig;
+    Actor3D actor;
     int shown = -1;
     float t;
     final Label[] slot = new Label[10];
@@ -30,11 +32,24 @@ public class HeroSelectScreen extends ScreenAdapter {
 
     public HeroSelectScreen() {
         float s = Ui.sc;
+        mbA = new ModelBatch();
+        mbP = Actor3D.modelsOk ? Actor3D.pbrBatch() : null;
         env.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.5f, 0.5f, 0.6f, 1f));
         env.add(new DirectionalLight().set(1f, 0.95f, 0.85f, -0.4f, -0.8f, -0.6f));
+        envP.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.75f, 0.75f, 0.8f, 1f));
+        DirectionalLightEx l1 = new DirectionalLightEx();
+        l1.direction.set(-0.4f, -0.8f, -0.6f).nor();
+        l1.color.set(1f, 0.95f, 0.85f, 1f);
+        l1.intensity = 3f;
+        envP.add(l1);
+        DirectionalLightEx l2 = new DirectionalLightEx();
+        l2.direction.set(0.6f, -0.2f, 0.5f).nor();
+        l2.color.set(0.5f, 0.6f, 1f, 1f);
+        l2.intensity = 1.5f;
+        envP.add(l2);
         cam = new PerspectiveCamera(40, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        cam.position.set(0, 2.1f, 7.5f);
-        cam.lookAt(0, 1.3f, 0);
+        cam.position.set(0, 2.3f, 8f);
+        cam.lookAt(0, 1.4f, 0);
         cam.near = 0.5f;
         cam.far = 50;
         cam.update();
@@ -45,11 +60,14 @@ public class HeroSelectScreen extends ScreenAdapter {
         st.addActor(root);
         Table l = new Table(), r = new Table();
         for (int i = 0; i < 10; i++) {
-            slot[i] = Ui.label("", 0.9f, i < 5 ? new Color(0.5f, 0.75f, 1f, 1) : new Color(1f, 0.55f, 0.5f, 1));
+            slot[i] = Ui.label("", 0.9f, i < 5 ? new Color(0.6f, 0.8f, 1f, 1) : new Color(1f, 0.6f, 0.55f, 1));
             Table c = i < 5 ? l : r;
-            c.add(slot[i]).width(150 * s).height(26 * s).left().padBottom(3 * s).row();
+            Table card = new Table();
+            card.setBackground(Ui.round(i < 5 ? new Color(0.1f, 0.2f, 0.5f, 0.75f) : new Color(0.5f, 0.12f, 0.12f, 0.75f)));
+            card.add(slot[i]).width(150 * s).height(24 * s).pad(2 * s, 8 * s, 2 * s, 8 * s);
+            c.add(card).padBottom(4 * s).row();
         }
-        timerL = Ui.label("", 2.2f, new Color(1f, 0.85f, 0.3f, 1));
+        timerL = Ui.label("", 2.4f, Ui.GOLD);
         Table mid = new Table();
         mid.add(Ui.label("CHOOSE YOUR HERO", 1.2f, Color.WHITE)).row();
         mid.add(timerL);
@@ -58,7 +76,7 @@ public class HeroSelectScreen extends ScreenAdapter {
         root.add(r).top().right().row();
         root.add().expand().colspan(3).row();
         Table bot = new Table();
-        heroL = Ui.label("", 1.4f, Color.WHITE);
+        heroL = Ui.label("", 1.5f, Color.WHITE);
         skillL = Ui.label("", 0.8f, Color.LIGHT_GRAY);
         Table info = new Table();
         info.add(heroL).row();
@@ -103,12 +121,11 @@ public class HeroSelectScreen extends ScreenAdapter {
         Ui.bg(sr, t);
         Gdx.gl.glClear(GL20.GL_DEPTH_BUFFER_BIT);
         int h = G.pickHero;
-        if (shown != h) { shown = h; rig = new Heroes.Rig(h); }
+        if (shown != h) { shown = h; actor = Actor3D.hero(h); }
         int a = ANIMS[((int) (t / 2.2f)) % ANIMS.length];
-        rig.update(0, 0, 15 + (float) Math.sin(t * 0.6f) * 25, a, t);
-        mb.begin(cam);
-        mb.render(rig.mi, env);
-        mb.end();
+        actor.update(0, 0, 15 + (float) Math.sin(t * 0.6f) * 25, a, t, dt);
+        if (!actor.pbr) { mbA.begin(cam); mbA.render(actor.mi, env); mbA.end(); }
+        else if (mbP != null) { mbP.begin(cam); mbP.render(actor.mi, envP); mbP.end(); }
         long left = Math.max(0, (G.pickEnd - System.currentTimeMillis()) / 1000);
         timerL.setText(left > 0 ? String.valueOf(left) : "Starting...");
         int my = G.team(G.myIdx);
@@ -131,5 +148,8 @@ public class HeroSelectScreen extends ScreenAdapter {
     }
 
     @Override
-    public void hide() { Gdx.input.setInputProcessor(null); st.dispose(); sr.dispose(); mb.dispose(); }
+    public void hide() {
+        Gdx.input.setInputProcessor(null);
+        st.dispose(); sr.dispose(); mbA.dispose(); if (mbP != null) mbP.dispose();
+    }
 }
