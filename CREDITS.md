@@ -1,6 +1,5 @@
-# Credits
-3D models (free):
-- RobotExpressive by Tomas Laulhe (CC0), via three.js examples
-- Soldier and Xbot (Mixamo characters), via three.js examples
-- Fox by PixelMannen and @tomkranis (CC-BY 4.0), Khronos glTF-Sample-Models
-glTF loading: gdx-gltf by mgsx-dev (Apache-2.0)
+# Credits (all free assets)
+- Characters (Knight, Mage, Rogue, Barbarian, Skeleton Minion, Skeleton Warrior): KayKit Character Packs by Kay Lousberg (CC0) - kaylousberg.com
+- Buildings (towers, castle): KayKit Medieval Hexagon Pack by Kay Lousberg (CC0)
+- glTF loading: gdx-gltf by mgsx-dev (Apache-2.0)
+Sounds are synthesized in code.

@@ -1,0 +1,10 @@
+import os, shutil, zipfile
+D = os.path.dirname(os.path.abspath(__file__))
+src = os.path.join(D, "out", "VinzArena.apk")
+dst = os.path.expanduser("~/storage/downloads/VinzArena.apk")
+shutil.copy(src, dst)
+z = zipfile.ZipFile(dst)
+names = z.namelist()
+print("copied", os.path.getsize(dst), "bytes; zip test:", z.testzip())
+print("glb assets:", [n for n in names if n.endswith(".glb")])
+print("libs:", [n for n in names if n.endswith(".so")])

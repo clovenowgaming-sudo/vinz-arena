@@ -354,6 +354,7 @@ public class MatchScreen extends ScreenAdapter {
 
         // pass A: world + towers + procedural actors
         ArrayList<Actor3D> pbrList = new ArrayList<Actor3D>();
+        ArrayList<ModelInstance> pbrProps = new ArrayList<ModelInstance>();
         mbA.begin(cam);
         world.render(mbA, env, cam);
         for (int i = 0; i < 10; i++) {
@@ -363,7 +364,7 @@ public class MatchScreen extends ScreenAdapter {
             if (hero[i].pbr) pbrList.add(hero[i]); else mbA.render(hero[i].mi, env);
         }
         for (G.Ent e : G.ents.values()) {
-            if (e.kind >= 4) { drawStatic(e); continue; }
+            if (e.kind >= 4) { drawStatic(e, pbrProps); continue; }
             if (e.actor == null) {
                 e.actor = e.kind == 0 ? Actor3D.minion(e.team, false) : e.kind == 1 ? Actor3D.minion(e.team, true) : Actor3D.monster(e.kind == 3);
             }
@@ -372,9 +373,10 @@ public class MatchScreen extends ScreenAdapter {
         }
         mbA.end();
         // pass B: glTF characters (PBR shader)
-        if (mbP != null && !pbrList.isEmpty()) {
+        if (mbP != null && (!pbrList.isEmpty() || !pbrProps.isEmpty())) {
             mbP.begin(cam);
             for (Actor3D a : pbrList) mbP.render(a.mi, envP);
+            for (ModelInstance pm : pbrProps) mbP.render(pm, envP);
             mbP.end();
         }
         // pass C: transparent rings + effects
@@ -399,20 +401,35 @@ public class MatchScreen extends ScreenAdapter {
         hud(lost);
     }
 
-    void drawStatic(G.Ent e) {
+    void drawStatic(G.Ent e, ArrayList<ModelInstance> pbrProps) {
+        boolean tower = e.kind == 4;
+        Color tc = e.team == 0 ? World.BLUE : World.RED;
         if (e.parts == null) {
-            if (e.kind == 4) {
-                e.parts = new ModelInstance[]{new ModelInstance(world.tBase), new ModelInstance(world.tBody),
-                        new ModelInstance(e.team == 0 ? world.tTop0 : world.tTop1)};
-                e.parts[0].transform.setToTranslation(e.x, 0.3f, e.z);
-                e.parts[1].transform.setToTranslation(e.x, 2.8f, e.z);
-                e.parts[2].transform.setToTranslation(e.x, 5.9f, e.z);
+            ModelInstance prop = Actor3D.prop(tower ? "tower" : "castle", e.team);
+            if (tower) {
+                if (prop != null) prop.transform.setToTranslation(e.x, 0, e.z).scale(3.1f, 3.1f, 3.1f);
+                e.parts = new ModelInstance[]{prop, new ModelInstance(e.team == 0 ? world.tTop0 : world.tTop1), ringInst(tc, 0.6f),
+                        new ModelInstance(world.tBase), new ModelInstance(world.tBody)};
+                e.parts[3].transform.setToTranslation(e.x, 0.3f, e.z);
+                e.parts[4].transform.setToTranslation(e.x, 2.8f, e.z);
             } else {
-                e.parts = new ModelInstance[]{new ModelInstance(e.team == 0 ? world.cry0 : world.cry1)};
+                if (prop != null) prop.transform.setToTranslation(e.x, 0, e.z).scale(3.4f, 3.4f, 3.4f);
+                e.parts = new ModelInstance[]{prop, new ModelInstance(e.team == 0 ? world.cry0 : world.cry1), ringInst(tc, 0.5f)};
             }
         }
-        if (e.kind == 5) e.parts[0].transform.setToTranslation(e.x, 3.5f + (float) Math.sin(t * 2) * 0.3f, e.z).rotate(Vector3.Y, t * 40);
-        for (ModelInstance mi : e.parts) mbA.render(mi, env);
+        boolean hasProp = e.parts[0] != null;
+        float top = tower ? (hasProp ? 2.49f * 3.1f : 5.9f) : (hasProp ? 3.98f * 3.4f : 3.5f);
+        float pulse = 1f + 0.12f * (float) Math.sin(t * 3 + e.id);
+        float bob = (float) Math.sin(t * 2 + e.id) * (tower ? 0.25f : 0.5f);
+        ModelInstance orb = e.parts[1];
+        if (tower) orb.transform.setToTranslation(e.x, top + 1.2f + bob, e.z).scale(pulse, pulse, pulse);
+        else orb.transform.setToTranslation(e.x, top + 3.4f + bob, e.z).rotate(Vector3.Y, t * 40).scale(pulse, pulse, pulse);
+        float r = (tower ? 3.6f : 8.5f) * (1f + 0.04f * (float) Math.sin(t * 2 + e.id));
+        e.parts[2].transform.setToTranslation(e.x, 0.1f, e.z).scale(r, 1, r);
+        if (hasProp) pbrProps.add(e.parts[0]);
+        else if (tower) { mbA.render(e.parts[3], env); mbA.render(e.parts[4], env); }
+        mbA.render(orb, env);
+        mbA.render(e.parts[2], env);
     }
 
     // ------------------------------------------------------------ HUD (Mobile-Legends style layout)
@@ -454,7 +471,7 @@ public class MatchScreen extends ScreenAdapter {
         }
         // minion / monster / tower bars
         for (G.Ent e : G.ents.values()) {
-            float wy = e.kind <= 1 ? 2.2f : (e.kind <= 3 ? (e.kind == 3 ? 5f : 3f) : (e.kind == 4 ? 7.5f : 7f));
+            float wy = e.kind <= 1 ? 2.2f : (e.kind <= 3 ? (e.kind == 3 ? 5f : 3f) : (e.kind == 4 ? 9.8f : 17.5f));
             float[] p = bar(e.vx, wy, e.vz);
             if (p[2] > 1) continue;
             float bw = (e.kind <= 1 ? 22 : (e.kind <= 3 ? 34 : 56)) * s, frac = Math.max(0, Math.min(1f, e.hp / (float) Math.max(1, e.maxhp)));
